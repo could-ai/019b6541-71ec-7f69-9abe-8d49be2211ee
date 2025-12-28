@@ -57,8 +57,9 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
 
   // 动画控制
   late AnimationController _shakeController;
-  late Animation<double> _shakeAnimation;
-  
+  late AnimationController _effectController; // 攻击特效控制器
+  Weapon? _animatingWeapon; // 当前正在播放动画的武器
+
   // 浮动伤害数字
   final List<DamageText> _damageTexts = [];
 
@@ -72,11 +73,26 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
       duration: const Duration(milliseconds: 100),
       vsync: this,
     );
-    _shakeAnimation = Tween<double>(begin: 0, end: 10).animate(
+    // 简单的左右抖动
+    Tween<double>(begin: 0, end: 10).animate(
       CurvedAnimation(parent: _shakeController, curve: Curves.elasticIn),
-    )..addStatusListener((status) {
+    ).addStatusListener((status) {
       if (status == AnimationStatus.completed) {
         _shakeController.reverse();
+      }
+    });
+
+    // 初始化攻击特效动画
+    _effectController = AnimationController(
+      duration: const Duration(milliseconds: 400),
+      vsync: this,
+    );
+    _effectController.addStatusListener((status) {
+      if (status == AnimationStatus.completed) {
+        _effectController.reset();
+        setState(() {
+          _animatingWeapon = null;
+        });
       }
     });
   }
@@ -84,14 +100,21 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
   @override
   void dispose() {
     _shakeController.dispose();
+    _effectController.dispose();
     super.dispose();
   }
 
   void _attack() {
     if (_isDefeated) return;
 
-    // 播放抖动动画
+    // 播放受击抖动
     _shakeController.forward(from: 0);
+
+    // 播放攻击特效
+    setState(() {
+      _animatingWeapon = _selectedWeapon;
+    });
+    _effectController.forward(from: 0);
 
     setState(() {
       _currentHp -= _selectedWeapon.damage;
@@ -173,12 +196,74 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
     );
   }
 
+  // 构建攻击特效
+  Widget _buildAttackEffect() {
+    if (_animatingWeapon == null) return const SizedBox();
+
+    return AnimatedBuilder(
+      animation: _effectController,
+      builder: (context, child) {
+        final value = _effectController.value;
+        
+        switch (_animatingWeapon!.name) {
+          case '普通拳头':
+            // 拳头变大并向前冲
+            return Transform.translate(
+              offset: Offset(0, 50 * (1 - value)), // 向上移动
+              child: Transform.scale(
+                scale: 1.0 + value * 1.5,
+                child: Opacity(
+                  opacity: 1 - value,
+                  child: const Icon(Icons.back_hand, size: 100, color: Colors.brown),
+                ),
+              ),
+            );
+          case '铁剑':
+            // 剑挥砍旋转
+            return Transform.rotate(
+              angle: -pi / 4 + (value * pi), // 从-45度砍到135度
+              child: Transform.translate(
+                offset: const Offset(0, -50),
+                child: Opacity(
+                  opacity: value < 0.8 ? 1.0 : (1 - value) * 5,
+                  child: const Icon(Icons.gavel, size: 120, color: Colors.blueGrey), // 用锤子图标代替剑，或者找个更像的
+                ),
+              ),
+            );
+          case '火焰魔法':
+            // 火焰爆炸扩散
+            return Transform.scale(
+              scale: 0.5 + value * 3.0,
+              child: Opacity(
+                opacity: 1 - value,
+                child: const Icon(Icons.local_fire_department, size: 100, color: Colors.orange),
+              ),
+            );
+          case '昊天锤':
+            // 锤子砸下
+            return Transform.translate(
+              offset: Offset(0, -100 * (1 - value)),
+              child: Transform.rotate(
+                angle: value * pi, // 旋转一圈砸下
+                child: Transform.scale(
+                  scale: 1.0 + sin(value * pi) * 0.5,
+                  child: const Icon(Icons.hardware, size: 150, color: Colors.purple),
+                ),
+              ),
+            );
+          default:
+            return const SizedBox();
+        }
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         title: const Text('打败栾灵犀'),
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
+        backgroundColor: Colors.pink[100], // 更有小女孩氛围的颜色
       ),
       body: Column(
         children: [
@@ -191,7 +276,7 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
                   'BOSS: 栾灵犀',
                   style: Theme.of(context).textTheme.headlineMedium?.copyWith(
                     fontWeight: FontWeight.bold,
-                    color: Colors.red[800],
+                    color: Colors.pink[800],
                   ),
                 ),
                 const SizedBox(height: 10),
@@ -201,7 +286,7 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
                     value: _currentHp / _initialHp,
                     minHeight: 20,
                     backgroundColor: Colors.grey[300],
-                    color: Colors.red,
+                    color: Colors.pink,
                   ),
                 ),
                 const SizedBox(height: 5),
@@ -217,7 +302,7 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
           Expanded(
             child: GestureDetector(
               onTap: _attack,
-              behavior: HitTestBehavior.opaque, // 确保点击整个区域都有效
+              behavior: HitTestBehavior.opaque,
               child: Stack(
                 alignment: Alignment.center,
                 children: [
@@ -246,50 +331,53 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
                         Container(
-                          width: 200,
-                          height: 200,
+                          width: 220,
+                          height: 220,
                           decoration: BoxDecoration(
-                            color: _isDefeated ? Colors.grey : Colors.red[100],
+                            color: _isDefeated ? Colors.grey[300] : Colors.pink[50],
                             shape: BoxShape.circle,
                             border: Border.all(
-                              color: _isDefeated ? Colors.grey : Colors.red,
-                              width: 4,
+                              color: _isDefeated ? Colors.grey : Colors.pink,
+                              width: 6,
                             ),
                             boxShadow: [
                               BoxShadow(
-                                color: Colors.black.withOpacity(0.2),
-                                blurRadius: 10,
-                                spreadRadius: 2,
+                                color: Colors.pink.withOpacity(0.2),
+                                blurRadius: 20,
+                                spreadRadius: 5,
                               )
                             ],
                           ),
                           child: Center(
                             child: _isDefeated 
-                              ? const Icon(Icons.sentiment_very_dissatisfied, size: 100, color: Colors.white)
-                              : const Icon(Icons.person, size: 100, color: Colors.red),
+                              ? const Text('😭', style: TextStyle(fontSize: 100)) // 哭脸
+                              : const Text('👧', style: TextStyle(fontSize: 100)), // 小女孩
                           ),
                         ),
                         const SizedBox(height: 20),
                         if (_isDefeated)
                           const Text(
-                            '已击败',
-                            style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Colors.grey),
+                            '呜呜呜...别打了...',
+                            style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.grey),
                           ),
                       ],
                     ),
                   ),
 
-                  // 伤害数字层
+                  // 攻击特效层 (在BOSS上面)
+                  _buildAttackEffect(),
+
+                  // 伤害数字层 (最上层)
                   ..._damageTexts.map((text) {
                     return Positioned(
-                      left: MediaQuery.of(context).size.width / 2 + text.x - 20, // 居中偏移
+                      left: MediaQuery.of(context).size.width / 2 + text.x - 20,
                       top: MediaQuery.of(context).size.height / 3 - text.offset + text.y,
                       child: Opacity(
                         opacity: text.opacity,
                         child: Text(
                           '-${text.damage}',
                           style: TextStyle(
-                            fontSize: 32,
+                            fontSize: 36,
                             fontWeight: FontWeight.bold,
                             color: Colors.red[900],
                             shadows: const [
